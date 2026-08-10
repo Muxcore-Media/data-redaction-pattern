@@ -86,7 +86,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Data Redaction Pattern",
-		Version:      "0.1.4",
+		Version:      "0.1.5",
 		Roles:        []string{"infrastructure"},
 		Description:  "Field-name prefix, path, and regex based PII redaction provider",
 		Author:       "MuxCore",
@@ -95,10 +95,10 @@ func (m *Module) Info() contracts.ModuleInfo {
 			{
 				Repo:      "github.com/Muxcore-Media/core/pkg/contracts",
 				Interface: "DataRedactionProvider",
-				Version:   "v0.4.0",
+				Version:   "v0.5.0",
 			},
 		},
-		MinCoreVersion: "0.4.0",
+		MinCoreVersion: "0.5.0",
 		HTTPAddr:       m.grpcAddr,
 	}
 }
