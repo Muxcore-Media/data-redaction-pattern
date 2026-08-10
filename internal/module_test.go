@@ -351,17 +351,17 @@ func TestSettingsExtraKeysLive(t *testing.T) {
 	if len(defs) != 1 || defs[0].Key != "extra_keys" {
 		t.Fatalf("Settings=%+v", defs)
 	}
-	raw, _ := json.Marshal(map[string]any{"employee_ssn": "111-22-3333", "name": "alice"})
+	raw, _ := json.Marshal(map[string]any{"employee_badge": "B-99", "name": "alice"})
 	resp, err := m.Redact(context.Background(), &dataredactionv1.RedactRequest{Data: raw})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var before map[string]any
 	_ = json.Unmarshal(resp.GetData(), &before)
-	if before["employee_ssn"] != "111-22-3333" {
-		t.Fatalf("expected unredacted before extra keys, got %#v", before["employee_ssn"])
+	if before["employee_badge"] != "B-99" {
+		t.Fatalf("expected unredacted before extra keys, got %#v", before["employee_badge"])
 	}
-	if err := m.UpdateSetting("extra_keys", "ssn"); err != nil {
+	if err := m.UpdateSetting("extra_keys", "badge"); err != nil {
 		t.Fatal(err)
 	}
 	resp, err = m.Redact(context.Background(), &dataredactionv1.RedactRequest{Data: raw})
@@ -370,8 +370,8 @@ func TestSettingsExtraKeysLive(t *testing.T) {
 	}
 	var after map[string]any
 	_ = json.Unmarshal(resp.GetData(), &after)
-	if after["employee_ssn"] != redactedString {
-		t.Fatalf("expected redacted ssn field, got %#v", after["employee_ssn"])
+	if after["employee_badge"] != redactedString {
+		t.Fatalf("expected redacted badge field, got %#v", after["employee_badge"])
 	}
 	if after["name"] != "alice" {
 		t.Fatalf("name should remain, got %#v", after["name"])
