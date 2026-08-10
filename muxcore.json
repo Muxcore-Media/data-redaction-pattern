@@ -1,10 +1,14 @@
 {
   "name": "Data Redaction Pattern",
   "description": "Field-name prefix, path, and regex based PII redaction provider",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "author": "MuxCore",
-  "roles": ["infrastructure"],
-  "capabilities": ["data.redaction"],
+  "roles": [
+    "infrastructure"
+  ],
+  "capabilities": [
+    "data.redaction"
+  ],
   "contracts": [
     {
       "repo": "github.com/Muxcore-Media/core/pkg/contracts",
