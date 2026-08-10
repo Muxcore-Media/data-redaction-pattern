@@ -344,3 +344,36 @@ func TestHealth(t *testing.T) {
 		t.Fatal("expected health to pass")
 	}
 }
+
+func TestSettingsExtraKeysLive(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0"})
+	defs := m.Settings()
+	if len(defs) != 1 || defs[0].Key != "extra_keys" {
+		t.Fatalf("Settings=%+v", defs)
+	}
+	raw, _ := json.Marshal(map[string]any{"employee_ssn": "111-22-3333", "name": "alice"})
+	resp, err := m.Redact(context.Background(), &dataredactionv1.RedactRequest{Data: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before map[string]any
+	_ = json.Unmarshal(resp.GetData(), &before)
+	if before["employee_ssn"] != "111-22-3333" {
+		t.Fatalf("expected unredacted before extra keys, got %#v", before["employee_ssn"])
+	}
+	if err := m.UpdateSetting("extra_keys", "ssn"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = m.Redact(context.Background(), &dataredactionv1.RedactRequest{Data: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after map[string]any
+	_ = json.Unmarshal(resp.GetData(), &after)
+	if after["employee_ssn"] != redactedString {
+		t.Fatalf("expected redacted ssn field, got %#v", after["employee_ssn"])
+	}
+	if after["name"] != "alice" {
+		t.Fatalf("name should remain, got %#v", after["name"])
+	}
+}

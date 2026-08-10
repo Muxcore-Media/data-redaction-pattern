@@ -15,6 +15,7 @@ import (
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	dataredactionv1 "github.com/Muxcore-Media/core/proto/gen/muxcore/dataredaction/v1"
+	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
 )
 
 const redactedString = "***REDACTED***"
@@ -38,8 +39,10 @@ type Module struct {
 	dataredactionv1.UnimplementedDataRedactionServiceServer
 
 	mu          sync.RWMutex
-	defaultRe   []*regexp.Regexp
+	baseKeys    []string
+	extraKeys   []string
 	defaultKeys []string
+	defaultRe   []*regexp.Regexp
 
 	id       string
 	grpcAddr string
@@ -69,8 +72,12 @@ func NewModule(cfg Config) *Module {
 	}
 
 	for _, key := range contracts.SensitiveLogFieldNames() {
-		mod.defaultKeys = append(mod.defaultKeys, strings.ToLower(key))
+		mod.baseKeys = append(mod.baseKeys, strings.ToLower(key))
 	}
+	if v := os.Getenv("REDACTION_EXTRA_KEYS"); v != "" {
+		mod.extraKeys = parseCSVLower(v)
+	}
+	mod.rebuildDefaultKeysLocked()
 
 	return mod
 }
@@ -79,7 +86,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Data Redaction Pattern",
-		Version:      "0.1.2",
+		Version:      "0.1.3",
 		Roles:        []string{"infrastructure"},
 		Description:  "Field-name prefix, path, and regex based PII redaction provider",
 		Author:       "MuxCore",
@@ -109,6 +116,7 @@ func (m *Module) Init(ctx context.Context) error {
 func (m *Module) Start(ctx context.Context) error {
 	m.grpcSrv = grpc.NewServer()
 	dataredactionv1.RegisterDataRedactionServiceServer(m.grpcSrv, m)
+	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
 
 	go func() {
 		slog.Info("data-redaction-pattern gRPC service started", "addr", m.grpcAddr)
@@ -142,7 +150,10 @@ func (m *Module) Redact(ctx context.Context, req *dataredactionv1.RedactRequest)
 		return nil, fmt.Errorf("compile rules: %w", err)
 	}
 
-	redacted := redactMap(data, m.defaultKeys, rules)
+	m.mu.RLock()
+	keys := append([]string(nil), m.defaultKeys...)
+	m.mu.RUnlock()
+	redacted := redactMap(data, keys, rules)
 
 	out, err := json.Marshal(redacted)
 	if err != nil {
