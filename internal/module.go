@@ -79,7 +79,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Data Redaction Pattern",
-		Version:      "0.1.0",
+		Version:      "0.1.2",
 		Roles:        []string{"infrastructure"},
 		Description:  "Field-name prefix, path, and regex based PII redaction provider",
 		Author:       "MuxCore",
