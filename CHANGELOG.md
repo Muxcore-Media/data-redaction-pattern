@@ -46,4 +46,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - PII redaction sidecar (`data.redaction`): `field:`, `path:`, and `/regex/` rules plus default sensitive keys.
-- `Redact` / `SupportedRules` gRPC; listen default `:9650` (`REDACTION_GRPC_ADDR`).
+- `Redact` / `SupportedRules` gRPC; listen default `:9655` (`REDACTION_GRPC_ADDR`).

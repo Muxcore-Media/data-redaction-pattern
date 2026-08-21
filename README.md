@@ -15,7 +15,7 @@ A gRPC sidecar module that recursively redacts JSON objects using configurable r
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `REDACTION_GRPC_ADDR` | `:9650` | Module gRPC listen address |
+| `REDACTION_GRPC_ADDR` | `:9655` | Module gRPC listen address |
 | `MUXCORE_MODULE_ID` | `data-redaction-pattern` | Module identity (SDK / registration) |
 | `MUXCORE_GRPC_ADDR` | *(required)* | Core mesh address |
 | `MUXCORE_INSECURE_DISABLE_TLS` | `false` | Set `true` to disable TLS (dev only) |

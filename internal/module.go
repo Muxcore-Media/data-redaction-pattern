@@ -60,7 +60,7 @@ func NewModule(cfg Config) *Module {
 		cfg.ID = "data-redaction-pattern"
 	}
 	if cfg.GRPCAddr == "" {
-		cfg.GRPCAddr = ":9650"
+		cfg.GRPCAddr = ":9655"
 	}
 	if v := os.Getenv("REDACTION_GRPC_ADDR"); v != "" {
 		cfg.GRPCAddr = v
