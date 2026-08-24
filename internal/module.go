@@ -42,7 +42,6 @@ type Module struct {
 	baseKeys    []string
 	extraKeys   []string
 	defaultKeys []string
-	defaultRe   []*regexp.Regexp
 
 	id       string
 	grpcAddr string
@@ -267,10 +266,6 @@ func matchesRule(key string, val any, rule compiledRule, currentPath string) boo
 		return rule.re.MatchString(s)
 	}
 	return false
-}
-
-func redactValue(v any, defaultKeys []string, rules []compiledRule) any {
-	return redactValueWithPath(v, defaultKeys, rules, "")
 }
 
 func redactValueWithPath(v any, defaultKeys []string, rules []compiledRule, parentPath string) any {
