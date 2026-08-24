@@ -60,7 +60,9 @@ func TestDefaultRedactsSensitiveKeys(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	if result["password"] != redactedString {
 		t.Errorf("expected password redacted, got %v", result["password"])
@@ -94,7 +96,9 @@ func TestDefaultRedactsNestedSensitiveKeys(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	user := result["user"].(map[string]any)
 	if user["password"] != redactedString {
@@ -124,7 +128,9 @@ func TestFieldRule(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	if result["email"] != redactedString {
 		t.Errorf("expected email redacted, got %v", result["email"])
@@ -160,7 +166,9 @@ func TestPathRule(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	if result["other"] != "data" {
 		t.Errorf("expected other=data, got %v", result["other"])
@@ -194,7 +202,9 @@ func TestRegexRule(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	if result["phone"] != redactedString {
 		t.Errorf("expected phone redacted, got %v", result["phone"])
@@ -233,7 +243,9 @@ func TestArrayRedact(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	items := result["items"].([]any)
 	for i, item := range items {
@@ -278,7 +290,9 @@ func TestPathRuleWithNestedArray(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	users := result["users"].([]any)
 	ssn := users[0].(map[string]any)["ssn"].(string)
@@ -306,7 +320,9 @@ func TestMultipleRules(t *testing.T) {
 	}
 
 	var result map[string]any
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
 
 	if result["credit_card"] != redactedString {
 		t.Errorf("expected credit_card redacted by field rule, got %v", result["credit_card"])
