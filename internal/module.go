@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -18,29 +17,13 @@ import (
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
 )
 
-const redactedString = "***REDACTED***"
-
-type ruleKind int
-
-const (
-	ruleFieldPrefix ruleKind = iota
-	rulePath
-	ruleRegex
-)
-
-type compiledRule struct {
-	kind ruleKind
-	raw  string
-	re   *regexp.Regexp
-	path string // for path rules, without "path:" prefix
-}
-
 type Module struct {
 	dataredactionv1.UnimplementedDataRedactionServiceServer
 
 	mu          sync.RWMutex
 	baseKeys    []string
 	extraKeys   []string
+	extraRules  []string
 	defaultKeys []string
 
 	id       string
@@ -73,8 +56,12 @@ func NewModule(cfg Config) *Module {
 	for _, key := range contracts.SensitiveLogFieldNames() {
 		mod.baseKeys = append(mod.baseKeys, strings.ToLower(key))
 	}
+	mod.baseKeys = append(mod.baseKeys, extraDefaultKeys...)
 	if v := os.Getenv("REDACTION_EXTRA_KEYS"); v != "" {
 		mod.extraKeys = parseCSVLower(v)
+	}
+	if v := os.Getenv("REDACTION_EXTRA_RULES"); v != "" {
+		mod.extraRules = parseCSVTrim(v)
 	}
 	mod.rebuildDefaultKeysLocked()
 
@@ -98,7 +85,6 @@ func (m *Module) Info() contracts.ModuleInfo {
 			},
 		},
 		MinCoreVersion: "0.5.0",
-		HTTPAddr:       m.grpcAddr,
 	}
 }
 
@@ -113,13 +99,15 @@ func (m *Module) Init(ctx context.Context) error {
 }
 
 func (m *Module) Start(ctx context.Context) error {
-	m.grpcSrv = grpc.NewServer()
-	dataredactionv1.RegisterDataRedactionServiceServer(m.grpcSrv, m)
-	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
+	srv := grpc.NewServer()
+	lis := m.lis
+	m.grpcSrv = srv
+	dataredactionv1.RegisterDataRedactionServiceServer(srv, m)
+	modulesdk.RegisterSettings(srv, m.id, m)
 
 	go func() {
 		slog.Info("data-redaction-pattern gRPC service started", "addr", m.grpcAddr)
-		if err := m.grpcSrv.Serve(m.lis); err != nil {
+		if err := srv.Serve(lis); err != nil {
 			slog.Error("data-redaction-pattern gRPC serve error", "error", err)
 		}
 	}()
@@ -129,30 +117,55 @@ func (m *Module) Start(ctx context.Context) error {
 func (m *Module) Stop(ctx context.Context) error {
 	if m.grpcSrv != nil {
 		m.grpcSrv.GracefulStop()
+		m.grpcSrv = nil
+	}
+	if m.lis != nil {
+		_ = m.lis.Close()
+		m.lis = nil
 	}
 	slog.Info("data-redaction-pattern stopped")
 	return nil
 }
 
 func (m *Module) Health(ctx context.Context) error {
+	if m.lis == nil || m.grpcSrv == nil {
+		return fmt.Errorf("gRPC server not serving")
+	}
 	return nil
 }
 
+// GRPCListenAddr returns the bound TCP address after Init.
+func (m *Module) GRPCListenAddr() string {
+	if m.lis != nil {
+		return m.lis.Addr().String()
+	}
+	return ""
+}
+
 func (m *Module) Redact(ctx context.Context, req *dataredactionv1.RedactRequest) (*dataredactionv1.RedactResponse, error) {
+	if len(req.GetData()) > defaultMaxPayloadBytes {
+		return nil, fmt.Errorf("payload exceeds max size (%d > %d bytes)", len(req.GetData()), defaultMaxPayloadBytes)
+	}
+
 	var data map[string]any
 	if err := json.Unmarshal(req.GetData(), &data); err != nil {
 		return nil, fmt.Errorf("decode input data: %w", err)
 	}
 
-	rules, err := compileRules(req.GetRules())
+	m.mu.RLock()
+	extraRules := append([]string(nil), m.extraRules...)
+	keys := append([]string(nil), m.defaultKeys...)
+	m.mu.RUnlock()
+
+	allRules := append(append([]string(nil), builtinRegexRules...), extraRules...)
+	allRules = append(allRules, req.GetRules()...)
+
+	rules, err := compileRules(allRules)
 	if err != nil {
 		return nil, fmt.Errorf("compile rules: %w", err)
 	}
 
-	m.mu.RLock()
-	keys := append([]string(nil), m.defaultKeys...)
-	m.mu.RUnlock()
-	redacted := redactMap(data, keys, rules)
+	redacted := redactMap(data, keys, rules, ctx)
 
 	out, err := json.Marshal(redacted)
 	if err != nil {
@@ -163,128 +176,27 @@ func (m *Module) Redact(ctx context.Context, req *dataredactionv1.RedactRequest)
 }
 
 func (m *Module) SupportedRules(ctx context.Context, req *dataredactionv1.SupportedRulesRequest) (*dataredactionv1.SupportedRulesResponse, error) {
-	return &dataredactionv1.SupportedRulesResponse{
-		RuleTypes: []string{
-			"field:<name>     — redact keys containing <name> (case-insensitive)",
-			"path:<a.b.c>     — redact nested path a → b → c",
-			"/<regex>/        — redact values matching <regex>",
-		},
-	}, nil
-}
+	m.mu.RLock()
+	base := append([]string(nil), m.baseKeys...)
+	extra := append([]string(nil), m.extraKeys...)
+	rules := append([]string(nil), m.extraRules...)
+	m.mu.RUnlock()
 
-func compileRules(raw []string) ([]compiledRule, error) {
-	rules := make([]compiledRule, 0, len(raw))
-	for _, r := range raw {
-		r = strings.TrimSpace(r)
-		if r == "" {
-			continue
-		}
-
-		if strings.HasPrefix(r, "field:") {
-			rules = append(rules, compiledRule{
-				kind: ruleFieldPrefix,
-				raw:  strings.ToLower(strings.TrimPrefix(r, "field:")),
-			})
-		} else if strings.HasPrefix(r, "path:") {
-			path := strings.TrimPrefix(r, "path:")
-			rules = append(rules, compiledRule{
-				kind: rulePath,
-				raw:  r,
-				path: path,
-			})
-		} else if len(r) > 2 && r[0] == '/' && strings.LastIndex(r, "/") > 0 {
-			inner := r[1 : len(r)-1]
-			re, err := regexp.Compile(inner)
-			if err != nil {
-				return nil, fmt.Errorf("invalid regex %q: %w", r, err)
-			}
-			rules = append(rules, compiledRule{
-				kind: ruleRegex,
-				raw:  r,
-				re:   re,
-			})
-		} else {
-			rules = append(rules, compiledRule{
-				kind: ruleFieldPrefix,
-				raw:  strings.ToLower(r),
-			})
-		}
+	ruleTypes := []string{
+		"field:<name>     — redact keys whose segment matches <name> (case-insensitive)",
+		"path:<a.b.c>     — redact nested path a → b → c",
+		"/<regex>/        — redact values matching <regex>",
+		"default_keys: " + strings.Join(base, ", "),
 	}
-	return rules, nil
-}
-
-func redactMap(data map[string]any, defaultKeys []string, rules []compiledRule) map[string]any {
-	return redactMapWithPath(data, defaultKeys, rules, "")
-}
-
-func redactMapWithPath(data map[string]any, defaultKeys []string, rules []compiledRule, parentPath string) map[string]any {
-	out := make(map[string]any, len(data))
-	for k, v := range data {
-		keyLower := strings.ToLower(k)
-		currentPath := k
-		if parentPath != "" {
-			currentPath = parentPath + "." + k
-		}
-
-		redact := false
-
-		for _, dk := range defaultKeys {
-			if strings.Contains(keyLower, dk) {
-				redact = true
-				break
-			}
-		}
-		if !redact {
-			for _, rule := range rules {
-				if matchesRule(k, v, rule, currentPath) {
-					redact = true
-					break
-				}
-			}
-		}
-
-		if redact {
-			out[k] = redactedString
-		} else {
-			out[k] = redactValueWithPath(v, defaultKeys, rules, currentPath)
-		}
+	if len(extra) > 0 {
+		ruleTypes = append(ruleTypes, "extra_keys: "+strings.Join(extra, ", "))
 	}
-	return out
-}
-
-func matchesRule(key string, val any, rule compiledRule, currentPath string) bool {
-	switch rule.kind {
-	case ruleFieldPrefix:
-		return strings.Contains(strings.ToLower(key), rule.raw)
-	case rulePath:
-		return currentPath == rule.path
-	case ruleRegex:
-		s, ok := val.(string)
-		if !ok {
-			return false
-		}
-		return rule.re.MatchString(s)
+	if len(rules) > 0 {
+		ruleTypes = append(ruleTypes, "extra_rules: "+strings.Join(rules, ", "))
 	}
-	return false
-}
+	ruleTypes = append(ruleTypes, "builtin_regex: "+strings.Join(builtinRegexRules, ", "))
 
-func redactValueWithPath(v any, defaultKeys []string, rules []compiledRule, parentPath string) any {
-	switch val := v.(type) {
-	case map[string]any:
-		return redactMapWithPath(val, defaultKeys, rules, parentPath)
-	case []any:
-		out := make([]any, len(val))
-		for i, item := range val {
-			if m, ok := item.(map[string]any); ok {
-				out[i] = redactMapWithPath(m, defaultKeys, rules, parentPath)
-			} else {
-				out[i] = item
-			}
-		}
-		return out
-	default:
-		return v
-	}
+	return &dataredactionv1.SupportedRulesResponse{RuleTypes: ruleTypes}, nil
 }
 
 var _ contracts.Module = (*Module)(nil)
