@@ -7,8 +7,8 @@ MuxCore sidecar module (`data-redaction-pattern`). Workspace deploy and SSH: [`.
 | Field | Value |
 |-------|-------|
 | Directory | `data-redaction-pattern` |
-| Capabilities | see muxcore.json |
-| Contracts | none declared |
+| Capabilities | `data.redaction`, `settings` |
+| Contracts | `DataRedactionProvider` (`muxcore.json`) |
 
 ## Agent rules
 
@@ -22,5 +22,9 @@ MuxCore sidecar module (`data-redaction-pattern`). Workspace deploy and SSH: [`.
 
 ```bash
 cd data-redaction-pattern
-go test ./...
+nix-shell -p go golangci-lint --run 'go test ./... && golangci-lint run ./...'
 ```
+
+## MVP soak
+
+Enable with `MVP_ENABLE_DATA_REDACTION=1` in `_mvp/.env`.

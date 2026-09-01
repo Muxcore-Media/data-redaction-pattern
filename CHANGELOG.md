@@ -8,7 +8,7 @@
 
 ### Changed
 
-- `muxcore.json` / `Info()` align `minCoreVersion` and contract pin to **0.5.0** (matches `go.mod` core **v0.5.2**)
+- `muxcore.json` / `Info()` align `minCoreVersion` and contract pin to **0.5.0** (matches `go.mod` core **v0.5.8**)
 
 ## [0.1.4] — 2026-08-10
 
@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `RegisterSettings` / `SettingsUpdater` for live `extra_keys` (`REDACTION_EXTRA_KEYS`)
-- Pin `core` / contracts / `sdk/go/module` to **v0.5.2**
+- Pin `core` / contracts / `sdk/go/module` to **v0.5.8**
 
 ## [0.1.2] — 2026-08-10
 

@@ -18,6 +18,7 @@ func (m *Module) UpdateSetting(key, value string) error {
 func (m *Module) settingsDefs() []contracts.SettingDef {
 	m.mu.RLock()
 	extra := strings.Join(m.extraKeys, ",")
+	rules := strings.Join(m.extraRules, ",")
 	m.mu.RUnlock()
 	return []contracts.SettingDef{
 		{
@@ -26,7 +27,16 @@ func (m *Module) settingsDefs() []contracts.SettingDef {
 			Type:        contracts.SettingTypeString,
 			Value:       extra,
 			Default:     "",
-			Description: "Comma-separated extra field-name substrings to redact (REDACTION_EXTRA_KEYS), in addition to built-in sensitive names",
+			Description: "Comma-separated extra field-name segments to redact (REDACTION_EXTRA_KEYS), in addition to built-in sensitive names",
+			Group:       "Redaction",
+		},
+		{
+			Key:         "extra_rules",
+			Label:       "Extra Redaction Rules",
+			Type:        contracts.SettingTypeString,
+			Value:       rules,
+			Default:     "",
+			Description: "Comma-separated path/regex/field rules (REDACTION_EXTRA_RULES) merged into every Redact call",
 			Group:       "Redaction",
 		},
 	}
@@ -40,6 +50,11 @@ func (m *Module) updateSetting(key, value string) error {
 		m.rebuildDefaultKeysLocked()
 		m.mu.Unlock()
 		return nil
+	case "extra_rules", "REDACTION_EXTRA_RULES":
+		m.mu.Lock()
+		m.extraRules = parseCSVTrim(value)
+		m.mu.Unlock()
+		return nil
 	default:
 		return fmt.Errorf("unknown setting %q", key)
 	}
@@ -50,6 +65,18 @@ func parseCSVLower(v string) []string {
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func parseCSVTrim(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
 		if p != "" {
 			out = append(out, p)
 		}

@@ -3,7 +3,11 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	dataredactionv1 "github.com/Muxcore-Media/core/proto/gen/muxcore/dataredaction/v1"
 )
@@ -104,6 +108,9 @@ func TestDefaultRedactsNestedSensitiveKeys(t *testing.T) {
 	if user["password"] != redactedString {
 		t.Errorf("expected nested password redacted, got %v", user["password"])
 	}
+	if user["email"] != redactedString {
+		t.Errorf("expected nested email redacted, got %v", user["email"])
+	}
 	if user["name"] != "alice" {
 		t.Errorf("expected nested name=alice, got %v", user["name"])
 	}
@@ -188,7 +195,6 @@ func TestRegexRule(t *testing.T) {
 	ctx := context.Background()
 
 	input := mustJSON(t, map[string]any{
-		"email": "alice@example.com",
 		"phone": "555-123-4567",
 		"name":  "alice",
 	})
@@ -208,9 +214,6 @@ func TestRegexRule(t *testing.T) {
 
 	if result["phone"] != redactedString {
 		t.Errorf("expected phone redacted, got %v", result["phone"])
-	}
-	if result["email"] != "alice@example.com" {
-		t.Errorf("expected email unchanged, got %v", result["email"])
 	}
 	if result["name"] != "alice" {
 		t.Errorf("expected name=alice, got %v", result["name"])
@@ -268,6 +271,18 @@ func TestSupportedRules(t *testing.T) {
 	}
 	if len(resp.RuleTypes) == 0 {
 		t.Fatal("expected at least one rule type description")
+	}
+	foundDefaults := false
+	for _, rt := range resp.RuleTypes {
+		if strings.HasPrefix(rt, "default_keys:") {
+			foundDefaults = true
+			if !strings.Contains(rt, "password") {
+				t.Errorf("default_keys missing password: %q", rt)
+			}
+		}
+	}
+	if !foundDefaults {
+		t.Fatal("expected default_keys in SupportedRules response")
 	}
 }
 
@@ -339,8 +354,14 @@ func TestLifecycle(t *testing.T) {
 	m := NewModule(Config{GRPCAddr: ":0"})
 	ctx := context.Background()
 
+	if err := m.Health(ctx); err == nil {
+		t.Fatal("expected health error before Init")
+	}
 	if err := m.Init(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if err := m.Health(ctx); err == nil {
+		t.Fatal("expected health error after Init before Start")
 	}
 	if err := m.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -351,20 +372,63 @@ func TestLifecycle(t *testing.T) {
 	if err := m.Stop(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := m.Health(ctx); err == nil {
+		t.Fatal("expected health error after stop")
+	}
 }
 
 func TestHealth(t *testing.T) {
 	m := NewModule(Config{})
 	ctx := context.Background()
-	if err := m.Health(ctx); err != nil {
-		t.Fatal("expected health to pass")
+	if err := m.Health(ctx); err == nil {
+		t.Fatal("expected health error before init")
+	}
+}
+
+func TestGRPCRoundTrip(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0"})
+	ctx := context.Background()
+	if err := m.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Stop(ctx) })
+
+	conn, err := grpc.NewClient(m.GRPCListenAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	rpc := dataredactionv1.NewDataRedactionServiceClient(conn)
+	raw, _ := json.Marshal(map[string]any{"password": "secret", "title": "Movie"})
+	redactResp, err := rpc.Redact(ctx, &dataredactionv1.RedactRequest{Data: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var redacted map[string]any
+	if err := json.Unmarshal(redactResp.GetData(), &redacted); err != nil {
+		t.Fatal(err)
+	}
+	if redacted["password"] != redactedString {
+		t.Fatalf("password=%v", redacted["password"])
+	}
+
+	rulesResp, err := rpc.SupportedRules(ctx, &dataredactionv1.SupportedRulesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rulesResp.GetRuleTypes()) == 0 {
+		t.Fatal("expected rule types")
 	}
 }
 
 func TestSettingsExtraKeysLive(t *testing.T) {
 	m := NewModule(Config{GRPCAddr: "127.0.0.1:0"})
 	defs := m.Settings()
-	if len(defs) != 1 || defs[0].Key != "extra_keys" {
+	if len(defs) != 2 || defs[0].Key != "extra_keys" || defs[1].Key != "extra_rules" {
 		t.Fatalf("Settings=%+v", defs)
 	}
 	raw, _ := json.Marshal(map[string]any{"employee_badge": "B-99", "name": "alice"})
@@ -391,5 +455,267 @@ func TestSettingsExtraKeysLive(t *testing.T) {
 	}
 	if after["name"] != "alice" {
 		t.Fatalf("name should remain, got %#v", after["name"])
+	}
+}
+
+func TestArrayRegexRedaction(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{
+		"phones": []any{"555-123-4567", "alice"},
+	})
+
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{
+		Data:  input,
+		Rules: []string{"/\\d{3}-\\d{3}-\\d{4}/"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
+
+	phones := result["phones"].([]any)
+	if phones[0] != redactedString {
+		t.Errorf("expected phone redacted in array, got %v", phones[0])
+	}
+	if phones[1] != "alice" {
+		t.Errorf("expected alice preserved, got %v", phones[1])
+	}
+}
+
+func TestNestedArrayRegexRedaction(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{
+		"groups": []any{
+			[]any{"555-123-4567"},
+		},
+	})
+
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{
+		Data:  input,
+		Rules: []string{"/\\d{3}-\\d{3}-\\d{4}/"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
+
+	inner := result["groups"].([]any)[0].([]any)
+	if inner[0] != redactedString {
+		t.Errorf("expected nested array phone redacted, got %v", inner[0])
+	}
+}
+
+func TestAuthorPreservedAuthorizationRedacted(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{
+		"author":        "Jane Austen",
+		"authorization": "Bearer secret",
+	})
+
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{Data: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		t.Fatal(err)
+	}
+
+	if result["author"] != "Jane Austen" {
+		t.Errorf("author should be preserved, got %v", result["author"])
+	}
+	if result["authorization"] != redactedString {
+		t.Errorf("authorization should be redacted, got %v", result["authorization"])
+	}
+}
+
+func TestExtraRulesSetting(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{"note": "call 555-123-4567"})
+	if err := m.UpdateSetting("extra_rules", "/\\d{3}-\\d{3}-\\d{4}/"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{Data: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]any
+	_ = json.Unmarshal(resp.Data, &result)
+	if result["note"] != redactedString {
+		t.Fatalf("note=%v", result["note"])
+	}
+}
+
+func TestExtraRulesEnvBootstrap(t *testing.T) {
+	t.Setenv("REDACTION_EXTRA_RULES", "path:payload.path")
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{
+		"payload": map[string]any{"path": "hidden"},
+		"other":   "visible",
+	})
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{Data: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	_ = json.Unmarshal(resp.Data, &result)
+	payload := result["payload"].(map[string]any)
+	if payload["path"] != redactedString {
+		t.Fatalf("path=%v", payload["path"])
+	}
+}
+
+func TestExtraKeysEnvBootstrap(t *testing.T) {
+	t.Setenv("REDACTION_EXTRA_KEYS", "badge")
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{"employee_badge": "B-99"})
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{Data: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	_ = json.Unmarshal(resp.Data, &result)
+	if result["employee_badge"] != redactedString {
+		t.Fatalf("employee_badge=%v", result["employee_badge"])
+	}
+}
+
+func TestUnknownUpdateSetting(t *testing.T) {
+	m := NewModule(Config{})
+	if err := m.UpdateSetting("unknown_key", "x"); err == nil {
+		t.Fatal("expected error for unknown setting")
+	}
+}
+
+func TestBareFieldRule(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	input := mustJSON(t, map[string]any{
+		"user_name": "alice",
+		"name":      "bob",
+		"nickname":  "carol",
+	})
+	resp, err := m.Redact(ctx, &dataredactionv1.RedactRequest{
+		Data:  input,
+		Rules: []string{"name"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	_ = json.Unmarshal(resp.Data, &result)
+	if result["name"] != redactedString {
+		t.Fatalf("name=%v", result["name"])
+	}
+	if result["user_name"] != redactedString {
+		t.Fatalf("user_name=%v", result["user_name"])
+	}
+	if result["nickname"] != "carol" {
+		t.Fatalf("nickname=%v", result["nickname"])
+	}
+}
+
+func TestOversizedPayload(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+	big := make([]byte, defaultMaxPayloadBytes+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	_, err := m.Redact(ctx, &dataredactionv1.RedactRequest{Data: big})
+	if err == nil {
+		t.Fatal("expected error for oversized payload")
+	}
+}
+
+func TestInvalidRegex(t *testing.T) {
+	m := NewModule(Config{})
+	ctx := context.Background()
+	input := mustJSON(t, map[string]any{"x": "y"})
+	_, err := m.Redact(ctx, &dataredactionv1.RedactRequest{
+		Data:  input,
+		Rules: []string{"/(/"},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid regex")
+	}
+}
+
+func TestSupportedRulesExtraKeysAndRules(t *testing.T) {
+	t.Setenv("REDACTION_EXTRA_KEYS", "badge")
+	t.Setenv("REDACTION_EXTRA_RULES", "path:foo.bar")
+	m := NewModule(Config{})
+	ctx := context.Background()
+
+	resp, err := m.SupportedRules(ctx, &dataredactionv1.SupportedRulesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extraKeys, extraRules bool
+	for _, rt := range resp.RuleTypes {
+		if strings.HasPrefix(rt, "extra_keys:") && strings.Contains(rt, "badge") {
+			extraKeys = true
+		}
+		if strings.HasPrefix(rt, "extra_rules:") && strings.Contains(rt, "path:foo.bar") {
+			extraRules = true
+		}
+	}
+	if !extraKeys {
+		t.Fatal("expected extra_keys in SupportedRules")
+	}
+	if !extraRules {
+		t.Fatal("expected extra_rules in SupportedRules")
+	}
+}
+
+func TestKeyMatchesToken(t *testing.T) {
+	cases := []struct {
+		key, token string
+		want       bool
+	}{
+		{"password", "password", true},
+		{"user_password", "password", true},
+		{"author", "auth", false},
+		{"authorization", "auth", false},
+		{"authorization", "authorization", true},
+		{"apiKey", "api", true},
+		{"apiKey", "key", true},
+	}
+	for _, tc := range cases {
+		got := keyMatchesToken(tc.key, tc.token)
+		if got != tc.want {
+			t.Errorf("keyMatchesToken(%q, %q) = %v, want %v", tc.key, tc.token, got, tc.want)
+		}
+	}
+}
+
+func TestInfoHTTPAddrEmpty(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: ":9655"})
+	if m.Info().HTTPAddr != "" {
+		t.Fatalf("HTTPAddr=%q, want empty", m.Info().HTTPAddr)
 	}
 }
