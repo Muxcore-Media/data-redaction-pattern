@@ -11,10 +11,12 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	dataredactionv1 "github.com/Muxcore-Media/core/proto/gen/muxcore/dataredaction/v1"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	"github.com/Muxcore-Media/data-redaction-pattern/internal/grpctls"
 )
 
 type Module struct {
@@ -42,11 +44,12 @@ func NewModule(cfg Config) *Module {
 		cfg.ID = "data-redaction-pattern"
 	}
 	if cfg.GRPCAddr == "" {
-		cfg.GRPCAddr = ":9655"
+		cfg.GRPCAddr = "127.0.0.1:9655"
 	}
 	if v := os.Getenv("REDACTION_GRPC_ADDR"); v != "" {
 		cfg.GRPCAddr = v
 	}
+	cfg.GRPCAddr = resolveGRPCAddr(cfg.GRPCAddr)
 
 	mod := &Module{
 		id:       cfg.ID,
@@ -99,7 +102,21 @@ func (m *Module) Init(ctx context.Context) error {
 }
 
 func (m *Module) Start(ctx context.Context) error {
-	srv := grpc.NewServer()
+	var grpcOpts []grpc.ServerOption
+	tlsCfg, err := grpctls.ServerConfig()
+	if err != nil {
+		return fmt.Errorf("gRPC TLS: %w", err)
+	}
+	if tlsCfg != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+		slog.Info("data-redaction-pattern gRPC TLS enabled", "addr", m.grpcAddr)
+	} else {
+		slog.Warn("data-redaction-pattern gRPC listening without TLS (dev only)",
+			"addr", m.grpcAddr,
+			"hint", "unset MUXCORE_INSECURE_DISABLE_TLS for production",
+		)
+	}
+	srv := grpc.NewServer(grpcOpts...)
 	lis := m.lis
 	m.grpcSrv = srv
 	dataredactionv1.RegisterDataRedactionServiceServer(srv, m)
@@ -197,6 +214,25 @@ func (m *Module) SupportedRules(ctx context.Context, req *dataredactionv1.Suppor
 	ruleTypes = append(ruleTypes, "builtin_regex: "+strings.Join(builtinRegexRules, ", "))
 
 	return &dataredactionv1.SupportedRulesResponse{RuleTypes: ruleTypes}, nil
+}
+
+// resolveGRPCAddr prefers loopback when plaintext is explicitly enabled and the
+// bind address would otherwise listen on all interfaces.
+func resolveGRPCAddr(addr string) string {
+	if !grpctls.InsecureAllowed() {
+		return addr
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.HasPrefix(addr, ":") {
+			return "127.0.0.1" + addr
+		}
+		return addr
+	}
+	if host == "" || host == "0.0.0.0" {
+		return "127.0.0.1:" + port
+	}
+	return addr
 }
 
 var _ contracts.Module = (*Module)(nil)

@@ -4,6 +4,8 @@ Field-name segment, path, and regex based PII redaction provider for MuxCore.
 
 A gRPC sidecar module that recursively redacts JSON objects using configurable rules — field name segment matching, exact nested paths, and regex value patterns. Without this module, core has no structured data redaction capability. Matched values are replaced with `***REDACTED***`.
 
+The gRPC listener uses TLS by default on `127.0.0.1:9655`. Auto-generated dev certificates are stored under `~/.muxcore/tls/data-redaction-pattern` unless overridden. Set `MUXCORE_INSECURE_DISABLE_TLS=true` for plaintext dev mode only.
+
 ## Key Features
 
 - **Three rule types** — `field:<name>` (case-insensitive segment key match), `path:<a.b.c>` (exact nested path), `/<regex>/` (string value pattern). Bare strings (no prefix) are treated as `field:` rules.
@@ -17,12 +19,17 @@ A gRPC sidecar module that recursively redacts JSON objects using configurable r
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `REDACTION_GRPC_ADDR` | `:9655` | Module gRPC listen address |
+| `REDACTION_GRPC_ADDR` | `127.0.0.1:9655` | Module gRPC listen address (loopback by default) |
 | `REDACTION_EXTRA_KEYS` | *(empty)* | Comma-separated extra field-name segments to redact |
 | `REDACTION_EXTRA_RULES` | *(empty)* | Comma-separated path/regex/field rules merged into every `Redact` call |
 | `MUXCORE_MODULE_ID` | `data-redaction-pattern` | Module identity (SDK / registration) |
 | `MUXCORE_GRPC_ADDR` | *(required)* | Core mesh address |
-| `MUXCORE_INSECURE_DISABLE_TLS` | `false` | Set `true` to disable TLS (dev only) |
+| `MUXCORE_INSECURE_DISABLE_TLS` | `false` | Set `true` to disable inbound/outbound gRPC TLS (dev only) |
+| `MUXCORE_GRPC_INSECURE` | unset | Alias for `MUXCORE_INSECURE_DISABLE_TLS` |
+| `REDACTION_TLS_CERT` | auto | Server certificate path (falls back to `MUXCORE_TLS_CERT`) |
+| `REDACTION_TLS_KEY` | auto | Server private key path (falls back to `MUXCORE_TLS_KEY`) |
+| `REDACTION_TLS_CA` | auto | Client CA bundle for mTLS (falls back to `MUXCORE_TLS_CA`) |
+| `REDACTION_TLS_DIR` | `~/.muxcore/tls/data-redaction-pattern` | Directory for auto-generated dev certificates |
 | `MVP_ENABLE_DATA_REDACTION` | `0` | Enable in `_mvp/run-host.sh` soak stack |
 
 ## Usage
