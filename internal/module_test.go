@@ -351,6 +351,7 @@ func TestMultipleRules(t *testing.T) {
 }
 
 func TestLifecycle(t *testing.T) {
+	t.Setenv("MUXCORE_INSECURE_DISABLE_TLS", "true")
 	m := NewModule(Config{GRPCAddr: ":0"})
 	ctx := context.Background()
 
@@ -386,6 +387,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestGRPCRoundTrip(t *testing.T) {
+	t.Setenv("MUXCORE_INSECURE_DISABLE_TLS", "true")
 	m := NewModule(Config{GRPCAddr: "127.0.0.1:0"})
 	ctx := context.Background()
 	if err := m.Init(ctx); err != nil {
@@ -714,8 +716,15 @@ func TestKeyMatchesToken(t *testing.T) {
 }
 
 func TestInfoHTTPAddrEmpty(t *testing.T) {
-	m := NewModule(Config{GRPCAddr: ":9655"})
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:9655"})
 	if m.Info().HTTPAddr != "" {
 		t.Fatalf("HTTPAddr=%q, want empty", m.Info().HTTPAddr)
+	}
+}
+
+func TestDefaultGRPCAddrLoopback(t *testing.T) {
+	m := NewModule(Config{})
+	if m.grpcAddr != "127.0.0.1:9655" {
+		t.Fatalf("grpcAddr=%q want 127.0.0.1:9655", m.grpcAddr)
 	}
 }
