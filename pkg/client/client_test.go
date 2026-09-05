@@ -14,6 +14,7 @@ import (
 
 func startModule(t *testing.T) (*internal.Module, context.Context) {
 	t.Helper()
+	t.Setenv("MUXCORE_INSECURE_DISABLE_TLS", "true")
 	m := internal.NewModule(internal.Config{GRPCAddr: "127.0.0.1:0"})
 	ctx := context.Background()
 	if err := m.Init(ctx); err != nil {
