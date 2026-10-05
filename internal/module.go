@@ -16,6 +16,7 @@ import (
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	dataredactionv1 "github.com/Muxcore-Media/core/proto/gen/muxcore/dataredaction/v1"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	manifest "github.com/Muxcore-Media/data-redaction-pattern"
 	"github.com/Muxcore-Media/data-redaction-pattern/internal/grpctls"
 )
 
@@ -75,7 +76,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Data Redaction Pattern",
-		Version:      "0.1.5",
+		Version:      modulesdk.ManifestVersion(manifest.ManifestJSON),
 		Roles:        []string{"infrastructure"},
 		Description:  "Field-name prefix, path, and regex based PII redaction provider",
 		Author:       "MuxCore",
